@@ -46,9 +46,16 @@ Time estimate: 1h human-time + 1h compute-time
 
 ### Accessibility 
 
-The artifacts are available at [https://github.com/spring-epfl/aid-distribution-with-assessments-artifacts](). 
+The artifacts are available at [https://github.com/spring-epfl/aid-distribution-with-assessments-artifacts](), and include the code available at [https://github.com/spring-epfl/aid-distribution-with-assessments-artifacts]() (registered as a git submodule). 
 
 ### Set up the environment 
+
+Our artifact contains two categories of benchmarks: some are intended to be run on a desktop or laptop, and some are intended to be run on a phone. The [steps below](#general-setup) installs all dependencies needed to run both benchmarks. 
+
+[Alternatively](#alternative-docker-setup-for-non-phone-benchmarks), if you want to run only the desktop/laptop benchmarks (or if you want to run the benchmarks intended for phones on a desktop/laptop), we provide a Docker file based on Ubuntu 24.04. We cannot guarantee that this Docker image can be used to run benchmarks on phones due to Docker's spotty support for USB passthrough.
+All benchmarks using MP-SPDZ can also be run in the Docker image, so consider using the Docker image if installing/compiling MP-SPDZ gives errors on your machine.
+
+#### General setup
 
 ```bash
 git clone https://github.com/spring-epfl/aid-distribution-with-assessments-artifacts
@@ -56,22 +63,76 @@ cd aid-distribution-with-assessments-artifacts
 git submodule init && git submodule update --recursive
 
 # Install MP-SPDZ dependencies (see https://github.com/data61/MP-SPDZ)
-sudo apt-get install automake build-essential clang cmake git libboost-dev libboost-filesystem-dev libboost-iostreams-dev libboost-thread-dev libgmp-dev libntl-dev libsodium-dev libssl-dev libtool python3
+./install_MPSPDZ_deps
 cd MP-SPDZ
 make -j 8 semi-party.x 
 cd -
 
-# Install Rust
+# Install Rust (using rust-toolchain for version)
 curl https://sh.rustup.rs -sSf | sh
-
-# Compile code
-cargo build --release
 
 # Install cargo-dinghy
 cargo install cargo-dinghy
+
+# Compile code
+cargo build --release
 ```
 
-### Testing the Environment 
+##### Download phone-specific Rust target
+
+Additionally, you will need to install a Rust target for your phone architecture. E.g., for an Android phone, use
+
+```bash
+rustup target add aarch64-linux-android 
+```
+
+; for an iPhone, use
+
+```bash
+rustup target add aarch64-apple-ios
+```
+
+; if you get an error when invoking `cargo dinghy` commands when benchmarking, consult the help/error message for the missing target of your platform. 
+
+#### (alternative): Docker setup for non-phone benchmarks
+
+Build the Docker image:
+
+```bash
+docker build -t aid-distribution .
+```
+
+Open a shell inside the container:
+```bash
+docker run -it aid-distribution
+```
+
+If you wish to run benchmarks intended for phones inside the Docker image instead, replace `cargo dinghy -d $DINGHY_HINT` by `cargo` in the instructions below. 
+
+#### Connecting a phone
+
+Some benchmarks are intended to run on a phone. To do so, connect the phone with your machine (desktop/laptop) using a cable. Make sure USB debugging is enabled on your phone. 
+
+Run `cargo dinghy all-devices` and check if the phone is listed. 
+For debug purposes, you can additionally run `adb devices -l` (for Android phones; [see how to install adb here](https://developer.android.com/tools/releases/platform-tools)) or `idevice_id -l` (for iPhones; [see how to install libimobiledevices here](https://libimobiledevice.org/)) to check if the phone is connected.
+
+If the phone does not appear in the list of all-devices, or if it appears as "unauthorized": 
+
+1. Disconnect the phone;
+2. (If applicable, shut down adb with `adb kill-server`);
+3. On the phone, tap "Revoke USB debugging authorizations" in "Developer Options";
+4. Reconnect the phone to your machine;
+5. Check the phone, if applicable accept connection request/keys in pop-up;
+6. Run `cargo dinghy all-devices` and check if the phone is listed and not shown as "unauthorized".
+
+Further, you will need to specify a device name hint to tell `cargo-dinghy` which device should be used to run the benchmark. In the instructions below, we use the `DINGHY_HINT` environment variable to store this hint. The following should work out-of-the-box for Android phones:
+```bash
+export DINGHY_HINT=android
+```
+
+Finally, you might need to install a Rust target for your phone architecture (see [](#download-phone-specific-rust-target)); if you get an error when invoking `cargo dinghy` commands when benchmarking, consult the help/error message for the missing target of your platform.  `cargo dinghy`
+
+### Testing the Environment
 
 Run 
 
@@ -80,6 +141,14 @@ cargo test
 ```
 
 All tests should be passing. 
+
+Run 
+
+```bash
+cargo dinghy all-devices
+```
+
+Your phone should be listed, and not shown as "unauthorized".
 
 ## Artifact Evaluation 
 
@@ -103,10 +172,10 @@ Expected time: 10 minutes human-time + 10 minutes compute-time
 
 ##### Recipient P
 
-Connect a phone to your machine and enable USB debugging (run `adb devices -l` to check if the phone is connected and available). Run
+Connect a phone to your machine and enable USB debugging (see [instructions to connect a phone](#connecting-a-phone)). In `aid-distribution-with-assessments-artifacts/`, run
 
 ```bash
-cargo dinghy -d android bench --bench hbc_2pc_1 -- hbc_2pc_1_recipient     
+cargo dinghy -d $DINGHY_HINT bench --bench hbc_2pc_1 -- hbc_2pc_1_recipient     
 ```   
 
 and read off the timings for "hbc_2pc_1_recipient". 
@@ -126,12 +195,12 @@ In order to benchmark runtimes for the distribution station and helper, use the 
 
 ```bash
 ./create_inputs_1.sh
-./compile.py assessment_thresholded_stats
 Scripts/semi.sh assessment_thresholded_stats -v
 ```
 
 This will output the computation time (same for D and H), as well as the total amount of communication. In addition to this communication, there is a base communication cost stemming from the distribution station D sending inputs to the helper, which is 1 MB of data (not shown in benchmark output). The additional communication of the 2PC protocol is negligible compared to this base cost. 
 
+(Optionally, for debug purposes, you can recompile the MP-SPDZ program using `./compile.py assessment_thresholded_stats > /dev/null`)
 
 #### Experiment 2: HbC-2PC-f2
 
@@ -139,11 +208,11 @@ Expected time: 10 minutes human-time + 10 minutes compute-time
 
 ##### Auditor A
 
-Run
+In `aid-distribution-with-assessments-artifacts/`, run
 
 ```bash
 cargo bench --bench hbc_2pc_2 
-```   
+```
 
 and read off the timings for "hbc_2pc_2_auditor". 
 
@@ -161,13 +230,13 @@ cd MP-SPDZ
 In order to benchmark runtimes for the distribution station and helper, use the following bash snippet:
 
 ```bash
-cd MP-SPDZ
 ./create_inputs_2.sh
-./compile.py assessment_conditional_disclosure
-Scripts//semi.sh assessment_conditional_disclosure -v
+Scripts/semi.sh assessment_conditional_disclosure -v
 ```
 
 This will output the computation time (same for D and H), as well as the total amount of communication. In this setting, there is no base communication happening, and the communication sizes correspond directly to the entries in the table. 
+
+(Optionally, for debug purposes, you can recompile the MP-SPDZ program using `./compile.py assessment_conditional_disclosure > /dev/null`)
 
 
 #### Experiment 3: HbC-thHE-f1
@@ -176,17 +245,17 @@ Expected time: 10 minutes human-time + 10 minutes compute-time
 
 ##### Recipient P
 
-Connect a phone to your machine and enable USB debugging (run `adb devices -l` to check if the phone is connected and available). Run
+Connect a phone to your machine and enable USB debugging (see [instructions to connect a phone](#connecting-a-phone)). In `aid-distribution-with-assessments-artifacts/`, run
 
 ```bash
-cargo dinghy -d android bench --bench hbc_thhe_1 -- hbc_thhe_1_recipient     
-```   
+cargo dinghy -d $DINGHY_HINT bench --bench hbc_thhe_1 -- hbc_thhe_1_recipient     
+```
 
 and read off the timings for "hbc_thhe_1_recipient". 
 
 ##### Distribution station D, Helper H
 
-Run
+In `aid-distribution-with-assessments-artifacts/`, run
 
 ```bash
 cargo bench --bench hbc_thhe_1 -- --nocapture 
@@ -200,17 +269,17 @@ Expected time: 10 minutes human-time + 10 minutes compute-time
 
 ##### Recipient P
 
-Connect a phone to your machine and enable USB debugging (run `adb devices -l` to check if the phone is connected and available). Run
+Connect a phone to your machine and enable USB debugging (see [instructions to connect a phone](#connecting-a-phone)). In `aid-distribution-with-assessments-artifacts/`, run
 
 ```bash
-cargo dinghy -d android bench --bench hbc_thhe_2  
+cargo dinghy -d $DINGHY_HINT bench --bench hbc_thhe_2  
 ```   
 
 and read off the timings for "hbc_thhe_2_recipient". 
 
 ##### Distribution station D, Helper H, Auditor A
 
-Run
+In `aid-distribution-with-assessments-artifacts/`, run
 
 ```bash
 cargo bench --bench hbc_thhe_2 -- --nocapture 
@@ -225,17 +294,17 @@ Expected time: 10 minutes human-time + 10 minutes compute-time
 
 ##### Recipient P
 
-Connect a phone to your machine and enable USB debugging (run `adb devices -l` to check if the phone is connected and available). Run
+Connect a phone to your machine and enable USB debugging (see [instructions to connect a phone](#connecting-a-phone)). In `aid-distribution-with-assessments-artifacts/`, run
 
 ```bash
-cargo dinghy -d android bench --bench mal_thhe_1
+cargo dinghy -d $DINGHY_HINT bench --bench mal_thhe_1
 ```   
 
 and read off the timings for "mal_thhe_1_recipient". 
 
 ##### Distribution station D, Helper H, Auditor A
 
-Run
+In `aid-distribution-with-assessments-artifacts/`, run
 
 ```bash
 cargo bench --bench mal_thhe_1 -- --nocapture 
@@ -249,17 +318,17 @@ Expected time: 10 minutes human-time + 10 minutes compute-time
 
 ##### Recipient P
 
-Connect a phone to your machine and enable USB debugging (run `adb devices -l` to check if the phone is connected and available). Run
+Connect a phone to your machine and enable USB debugging (see [instructions to connect a phone](#connecting-a-phone)). In `aid-distribution-with-assessments-artifacts/`, run
 
 ```bash
-cargo dinghy -d android bench --bench mal_thhe_2
+cargo dinghy -d $DINGHY_HINT bench --bench mal_thhe_2
 ```   
 
 and read off the timings for "mal_thhe_1_recipient". 
 
 ##### Distribution station D, Helper H, Auditor A
 
-Run
+In `aid-distribution-with-assessments-artifacts/`, run
 
 ```bash
 cargo bench --bench mal_thhe_2 -- --nocapture 
