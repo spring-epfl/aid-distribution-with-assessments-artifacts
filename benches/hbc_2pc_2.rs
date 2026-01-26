@@ -1,14 +1,12 @@
-use aid_distribution_with_assessments::DECRYPTION_THRESHOLD;
 use aid_distribution_with_assessments::MAX_ENTITLEMENT;
 use aid_distribution_with_assessments::NUM_RECIPIENTS;
 use aid_distribution_with_assessments::NUM_SHOW_UP;
 use aid_distribution_with_assessments::TAG_BYTELEN;
 use ark_ec::pairing::*;
 use ark_ff::PrimeField;
-use ark_serialize::CanonicalSerialize;
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use rand::thread_rng;
+use criterion::{Criterion, criterion_group, criterion_main};
 use rand::Rng;
+use rand::thread_rng;
 use std::collections::HashSet;
 use tink_core::keyset;
 
@@ -23,7 +21,7 @@ fn recipient<F: PrimeField>(
     let val = F::from(b);
     let mut rng = thread_rng();
     let share_0 = F::rand(&mut rng);
-    let share_1 = val - share_0;
+    let _share_1 = val - share_0;
 
     let enc = tink_hybrid::new_encrypt(&pk_enc_helper).unwrap();
     let id_bytes = id.to_be_bytes();
@@ -35,7 +33,7 @@ fn recipient<F: PrimeField>(
     let mut ctxts_1fe_pkehelper: Vec<Vec<u8>> = Vec::new();
 
     // Encrypt 1FE ciphertext and secret_tag_{i,p,1} under auditor's public key
-    let enc_auditor = tink_hybrid::new_encrypt(&pk_enc_auditor).unwrap();
+    let enc_auditor = tink_hybrid::new_encrypt(pk_enc_auditor).unwrap();
     let mut bytes_auditor = Vec::new();
     bytes_auditor.extend_from_slice(&secret_tags[0]); // secret_tag{i,p,k}
     bytes_auditor.extend_from_slice(&ctxt_1fe); // 1FE ciphertext
@@ -67,7 +65,7 @@ fn bench_auditor(
     sk_enc_auditor: &keyset::Handle,
 ) -> Vec<Vec<u8>> {
     // Decrypt outer ciphertexts to secret tag and 1FE ciphertexts
-    let dec_auditor = tink_hybrid::new_decrypt(&sk_enc_auditor).unwrap();
+    let dec_auditor = tink_hybrid::new_decrypt(sk_enc_auditor).unwrap();
     let mut secret_tags: Vec<Vec<[u8; TAG_BYTELEN]>> = Vec::new();
     let mut ctxts_1fe = Vec::new();
     for ctxts_recipient in ctxts_pke_auditor.iter() {
@@ -104,7 +102,6 @@ fn hbc_2pc_2_auditor(c: &mut Criterion) {
     type P = ark_bls12_381::Bls12_381;
     type F = <P as Pairing>::ScalarField;
 
-    let last_period = 0u16;
     let id = 1u16;
 
     // PKE.KeyGen for Helper
@@ -114,7 +111,6 @@ fn hbc_2pc_2_auditor(c: &mut Criterion) {
     )
     .unwrap();
     let pk_enc_helper = sk_enc_helper.public().unwrap();
-    let enc = tink_hybrid::new_encrypt(&pk_enc_helper).unwrap();
 
     // PKE.KeyGen for Auditor
     tink_hybrid::init();
@@ -123,7 +119,6 @@ fn hbc_2pc_2_auditor(c: &mut Criterion) {
     )
     .unwrap();
     let pk_enc_auditor = sk_enc_auditor.public().unwrap();
-    let enc_auditor = tink_hybrid::new_encrypt(&pk_enc_auditor).unwrap();
 
     // Generate secret tags for recipients
     let mut valid_set: HashSet<[u8; TAG_BYTELEN]> = HashSet::new();
@@ -142,7 +137,6 @@ fn hbc_2pc_2_auditor(c: &mut Criterion) {
     let ctxts = (0..NUM_SHOW_UP)
         .map(|i| recipient::<F>(1, id, &tags[i], &pk_enc_helper, &pk_enc_auditor))
         .collect::<Vec<_>>();
-    let ctxts_1fe_helper = ctxts.iter().map(|(ct, _)| ct.clone()).collect::<Vec<_>>();
     let ctxts_auditor = ctxts
         .iter()
         .map(|(_, ct_vec)| ct_vec.clone())

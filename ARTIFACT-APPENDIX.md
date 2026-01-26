@@ -319,7 +319,7 @@ In `aid-distribution-with-assessments-artifacts/`, run
 cargo bench --bench mal_thhe_1 -- --nocapture 
 ```
 
-and read off the timings for  "mal_thhe_1_helper" and "mal_thhe_1_distribution". 
+and read off the timings for  "mal_thhe_1_helper", "mal_thhe_1_distribution" and "mal_thhe_2_auditor". 
 
 #### Experiment 6: Mal-thHE-f2
 
@@ -343,7 +343,7 @@ In `aid-distribution-with-assessments-artifacts/`, run
 cargo bench --bench mal_thhe_2 -- --nocapture 
 ```
 
-and read off the timings for  "mal_thhe_2_helper" and "mal_thhe_2_distribution". 
+and read off the timings for  "mal_thhe_2_helper", "mal_thhe_2_distribution" and and "mal_thhe_2_auditor".
 
 ## Limitations
 

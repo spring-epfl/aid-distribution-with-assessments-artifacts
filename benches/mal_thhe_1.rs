@@ -1,38 +1,33 @@
-use std::collections::HashSet;
-
-use ark_ec::Group;
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-
-use aid_distribution_with_assessments::thbgn::rand_invertible;
 use aid_distribution_with_assessments::DECRYPTION_THRESHOLD;
+use aid_distribution_with_assessments::MAX_ENTITLEMENT;
 use aid_distribution_with_assessments::NUM_RECIPIENTS;
 use aid_distribution_with_assessments::NUM_SHOW_UP;
-use aid_distribution_with_assessments::MAX_ENTITLEMENT;
 use aid_distribution_with_assessments::TAG_BYTELEN;
+use aid_distribution_with_assessments::thbgn::rand_invertible;
+use ark_ec::Group;
 use ark_ec::bls12::Bls12;
 use ark_ec::pairing::Pairing;
-use ark_std::cfg_into_iter;
 use ark_std::One;
-use ark_std::UniformRand;
 use ark_std::Zero;
-use openssl::cipher::Cipher;
-use rand::thread_rng;
+use ark_std::cfg_into_iter;
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use rand::Rng;
-use secret_sharing_and_dkg::common::lagrange_basis_at_0_for_all;
+use rand::thread_rng;
 use secret_sharing_and_dkg::common::ShareId;
+use secret_sharing_and_dkg::common::lagrange_basis_at_0_for_all;
 use secret_sharing_and_dkg::error::SSError;
+use std::collections::HashSet;
 use tink_core::keyset;
 
 type G1 = <Bls12<ark_bls12_381::Config> as Pairing>::G1;
 type F = <Bls12<ark_bls12_381::Config> as Pairing>::ScalarField;
 
 type Ciphertext<G> = (G, G);
-type SecretKeyShare<G: Group> = (ShareId, G::ScalarField);
+type SecretKeyShare<G> = (ShareId, <G as Group>::ScalarField);
 type PublicKey<G> = G;
-type SecretKey<G: Group> = G::ScalarField;
+type SecretKey<G> = <G as Group>::ScalarField;
 type PublicParameters<G> = G;
 type PartialDecryption<G> = (ShareId, G);
-
 
 fn ctxt_to_bytes<G: Group>(ctxt: &Ciphertext<G>) -> Vec<u8> {
     let mut bytes = Vec::new();
@@ -84,11 +79,13 @@ fn partial_decrypt<G: Group>(ctxt: Ciphertext<G>, sk: SecretKeyShare<G>) -> Part
     (id, c2 * s)
 }
 
+#[allow(dead_code)]
 fn decrypt<G: Group>(ctxt: Ciphertext<G>, sk: SecretKey<G>) -> G::ScalarField {
     let (c1, c2) = ctxt;
     find_dlog(G::generator(), c2 - c1 * sk, (NUM_RECIPIENTS as u64).into()).unwrap()
 }
 
+#[allow(unexpected_cfgs)]
 pub fn reconstruct_secret_in_exp<G: Group>(shares: &[(ShareId, G)]) -> Result<G, SSError> {
     // let threshold = self.threshold();
     // let len = self.0.len() as ShareId;
@@ -129,7 +126,7 @@ fn bench_helper<G: Group>(
     }
 
     // Check auditor's signature on all ciphertexts
-    let v_auditor = tink_signature::new_verifier(&vk_sig_auditor).unwrap();
+    let v_auditor = tink_signature::new_verifier(vk_sig_auditor).unwrap();
     let mut all_ctxt_bytes = Vec::new();
     for ctxt_from_recipient_i in ctxts.iter() {
         for ctxt in ctxt_from_recipient_i.iter() {
@@ -137,16 +134,16 @@ fn bench_helper<G: Group>(
         }
     }
     v_auditor
-        .verify(&sig_auditor, all_ctxt_bytes.as_slice())
+        .verify(sig_auditor, all_ctxt_bytes.as_slice())
         .unwrap();
 
     // Decrypt outer ciphertexts
-    let dec = tink_hybrid::new_decrypt(&sk_enc_helper).unwrap();
+    let dec = tink_hybrid::new_decrypt(sk_enc_helper).unwrap();
     let inner_ctxts = ctxts
-        .into_iter()
+        .iter()
         .map(|ctxts_recipient| {
             ctxts_recipient
-                .into_iter()
+                .iter()
                 .map(|ctxt| {
                     let pt = dec.decrypt(ctxt, id_bytes.as_slice()).unwrap();
                     bytes_to_ctxt::<G>(&pt)
@@ -164,7 +161,7 @@ fn bench_helper<G: Group>(
         });
 
     // Sign the resulting ciphertext
-    let sig = tink_signature::new_signer(&sk_sig_helper).unwrap();
+    let sig = tink_signature::new_signer(sk_sig_helper).unwrap();
     let data: Vec<u8> = ctxt_to_bytes(&res);
     let signature = sig.sign(data.as_slice()).unwrap();
 
@@ -195,14 +192,14 @@ fn bench_recipient_1<G: Group>(
 
     let mut ctxts_1fe_pkehelper: Vec<Vec<u8>> = Vec::new();
     // Encrypt under helper's public key
-    let enc = tink_hybrid::new_encrypt(&pk_helper).unwrap();
+    let enc = tink_hybrid::new_encrypt(pk_helper).unwrap();
     let pt = ctxt_to_bytes(&ctxt);
     let bytes = pt.as_slice();
 
-    let ct_1fe_pkehelper = enc.encrypt(&bytes, id.to_be_bytes().as_slice()).unwrap();
+    let ct_1fe_pkehelper = enc.encrypt(bytes, id.to_be_bytes().as_slice()).unwrap();
 
     // Encrypt 1FE ciphertext and secret_tag_{i,p,1} under auditor's public key
-    let enc_auditor = tink_hybrid::new_encrypt(&pk_auditor).unwrap();
+    let enc_auditor = tink_hybrid::new_encrypt(pk_auditor).unwrap();
     let mut bytes_auditor = Vec::new();
     bytes_auditor.extend_from_slice(&secret_tags[0]); // secret_tag{i,p,1}
     bytes_auditor.extend_from_slice(&ct_1fe_pkehelper); // 1FE ciphertext
@@ -217,7 +214,7 @@ fn bench_recipient_1<G: Group>(
         let dummy_ctxt = encrypt::<G>(pp, pk, G::ScalarField::zero());
         let pt_dummy = ctxt_to_bytes(&dummy_ctxt);
         let ct_1fe_pkehelper = enc
-            .encrypt(&pt_dummy.as_slice(), id.to_be_bytes().as_slice())
+            .encrypt(pt_dummy.as_slice(), id.to_be_bytes().as_slice())
             .unwrap();
 
         let mut bytes_auditor = Vec::new();
@@ -233,9 +230,9 @@ fn bench_recipient_1<G: Group>(
 }
 
 fn bench_recipient_2<G: Group>(
-    pp: PublicParameters<G>,
-    id: u16,
-    pk: PublicKey<G>,
+    _pp: PublicParameters<G>,
+    _id: u16,
+    _pk: PublicKey<G>,
     ctxt_out: Ciphertext<G>,
     ctxt_out_sig: &Vec<u8>,
     sk: SecretKeyShare<G>,
@@ -243,24 +240,22 @@ fn bench_recipient_2<G: Group>(
 ) -> PartialDecryption<G> {
     // Verify signature on ctxt_out
     tink_signature::init();
-    let v = tink_signature::new_verifier(&vk).unwrap();
+    let v = tink_signature::new_verifier(vk).unwrap();
     let data: Vec<u8> = ctxt_to_bytes(&ctxt_out);
-    v.verify(&ctxt_out_sig, data.as_slice()).unwrap();
+    v.verify(ctxt_out_sig, data.as_slice()).unwrap();
 
     // Compute a partial decryption of a ciphertext
-    let pdec = partial_decrypt::<G>(ctxt_out, sk);
-
-    pdec
+    partial_decrypt::<G>(ctxt_out, sk)
 }
 
-fn bench_auditor<G: Group>(
+fn bench_auditor(
     ctxts_pke_auditor: &Vec<Vec<Vec<u8>>>,
     valid_set: &HashSet<[u8; TAG_BYTELEN]>,
     sk_enc_auditor: &keyset::Handle,
     sk_sig_auditor: &keyset::Handle,
 ) -> Vec<u8> {
     // Decrypt outer ciphertexts to secret tag and 1FE ciphertexts
-    let dec_auditor = tink_hybrid::new_decrypt(&sk_enc_auditor).unwrap();
+    let dec_auditor = tink_hybrid::new_decrypt(sk_enc_auditor).unwrap();
     let mut secret_tags: Vec<Vec<[u8; TAG_BYTELEN]>> = Vec::new();
     let mut ctxts_1fe = Vec::new();
     for ctxts_recipient in ctxts_pke_auditor.iter() {
@@ -329,7 +324,7 @@ fn mal_thhe_1(c: &mut Criterion) {
     // 1FE.KeyGen
     let (sk_1fe, pk_1fe) = keygen::<G1>(pp);
     let shares = (1..=DECRYPTION_THRESHOLD as u16)
-        .map(|i| (i, sk_1fe * F::from(i as u64))) // TODO: fix secret sharing
+        .map(|i| (i, sk_1fe * F::from(i as u64)))
         .collect::<Vec<SecretKeyShare<G1>>>();
 
     // Signatures
@@ -339,13 +334,11 @@ fn mal_thhe_1(c: &mut Criterion) {
     let sk_sig_helper =
         tink_core::keyset::Handle::new(&tink_signature::ecdsa_p256_key_template()).unwrap();
     let vk_sig_helper = sk_sig_helper.public().unwrap();
-    let sig_helper = tink_signature::new_signer(&sk_sig_helper).unwrap();
 
     // SIG.KeyGen for Auditor
     let sk_sig_auditor =
         tink_core::keyset::Handle::new(&tink_signature::ecdsa_p256_key_template()).unwrap();
     let vk_sig_auditor = sk_sig_auditor.public().unwrap();
-    let sig_auditor = tink_signature::new_signer(&sk_sig_auditor).unwrap();
 
     // PKE
     tink_hybrid::init();
@@ -356,7 +349,6 @@ fn mal_thhe_1(c: &mut Criterion) {
     )
     .unwrap();
     let pk_enc_helper: keyset::Handle = sk_enc_helper.public().unwrap();
-    let enc_helper = tink_hybrid::new_encrypt(&pk_enc_helper).unwrap();
 
     // PKE.KeyGen for Auditor
     tink_hybrid::init();
@@ -365,7 +357,6 @@ fn mal_thhe_1(c: &mut Criterion) {
     )
     .unwrap();
     let pk_enc_auditor = sk_enc_auditor.public().unwrap();
-    let enc_auditor = tink_hybrid::new_encrypt(&pk_enc_auditor).unwrap();
 
     // Generate secret tags for recipients
     let mut valid_set: HashSet<[u8; TAG_BYTELEN]> = HashSet::new();
@@ -392,7 +383,7 @@ fn mal_thhe_1(c: &mut Criterion) {
 
     // Auditor processes
     let sig_auditor =
-        bench_auditor::<G1>(&ctxts_auditor, &valid_set, &sk_enc_auditor, &sk_sig_auditor);
+        bench_auditor(&ctxts_auditor, &valid_set, &sk_enc_auditor, &sk_sig_auditor);
 
     // Helper checks and processes
     let (ctxt_out, ctxt_out_sig) = bench_helper(
@@ -422,10 +413,10 @@ fn mal_thhe_1(c: &mut Criterion) {
         })
         .collect::<Vec<_>>();
 
-    let share = shares[0].clone();
+    let share = shares[0];
     c.bench_function("mal_thhe_1_recipient", |b| {
         b.iter(|| {
-            bench_recipient_1::<G1>(
+            let _ = bench_recipient_1::<G1>(
                 black_box(1),
                 black_box(pp),
                 id,
@@ -434,7 +425,7 @@ fn mal_thhe_1(c: &mut Criterion) {
                 black_box(&pk_enc_helper),
                 black_box(&pk_enc_auditor),
             );
-            bench_recipient_2(
+            let _ = bench_recipient_2(
                 pp,
                 id,
                 pk_1fe,
@@ -448,7 +439,7 @@ fn mal_thhe_1(c: &mut Criterion) {
 
     c.bench_function("mal_thhe_1_auditor", |b| {
         b.iter(|| {
-            bench_auditor::<G1>(&ctxts_auditor, &valid_set, &sk_enc_auditor, &sk_sig_auditor);
+            bench_auditor(&ctxts_auditor, &valid_set, &sk_enc_auditor, &sk_sig_auditor);
         })
     });
 

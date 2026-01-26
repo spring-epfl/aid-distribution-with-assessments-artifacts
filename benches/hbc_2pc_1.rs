@@ -1,6 +1,5 @@
 use ark_ec::pairing::*;
 use ark_ff::PrimeField;
-use ark_serialize::CanonicalSerialize;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rand::thread_rng;
 
@@ -15,7 +14,7 @@ fn bench_recipient<F: PrimeField>(
     let share_0 = F::rand(&mut rng);
     let share_1 = val - share_0;
 
-    let enc = tink_hybrid::new_encrypt(&pk_enc_helper).unwrap();
+    let enc = tink_hybrid::new_encrypt(pk_enc_helper).unwrap();
     let id_bytes = id.to_be_bytes();
     let mut bytes = Vec::new();
     let writer = &mut bytes;
@@ -39,7 +38,6 @@ fn hbc_2pc_1_recipient(c: &mut Criterion) {
     )
     .unwrap();
     let pk_enc_helper = sk_enc_helper.public().unwrap();
-    let enc = tink_hybrid::new_encrypt(&pk_enc_helper).unwrap();
 
     c.bench_function("hbc_2pc_1_recipient", |b| {
         b.iter(|| {
