@@ -94,12 +94,21 @@ rustup target add aarch64-apple-ios
 
 ; if you get an error when invoking `cargo dinghy` commands when benchmarking, consult the help/error message for the missing target of your platform. 
 
+For Android phones, you will additionally require to install the Android Native Development Kit (NDK). The Android NDK can be downloaded from [here](https://developer.android.com/ndk/downloads) (Windows, Mac, Linux). On Mac, you may also use 
+
+```bash
+brew install --cask android-ndk
+export ANDROID_NDK_HOME="$HOMEBREW_PREFIX/share/android-ndk"
+```
+
+instead.
+
 #### (alternative): Docker setup for non-phone benchmarks
 
 Build the Docker image:
 
 ```bash
-docker build -t aid-distribution .
+docker buildx build -t aid-distribution .
 ```
 
 Open a shell inside the container:
