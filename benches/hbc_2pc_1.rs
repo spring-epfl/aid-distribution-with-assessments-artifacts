@@ -28,7 +28,6 @@ fn hbc_2pc_1_recipient(c: &mut Criterion) {
     type P = ark_bls12_381::Bls12_381;
     type F = <P as Pairing>::ScalarField;
 
-    let last_period = 0u16;
     let id = 1u16;
 
     // PKE.KeyGen for Helper

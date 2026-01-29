@@ -5,12 +5,16 @@ use aid_distribution_with_assessments::NUM_SHOW_UP;
 use aid_distribution_with_assessments::TAG_BYTELEN;
 use aid_distribution_with_assessments::thbgn::*;
 use ark_ec::pairing::Pairing;
+use ark_ec::pairing::PairingOutput;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
+use ark_std::UniformRand;
 use ark_std::Zero;
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use rand::Rng;
+use secret_sharing_and_dkg::common::ShareId;
 use std::collections::HashSet;
+use std::io::Write;
 use tink_core::keyset;
 
 const INFO_LEN: usize = 1 + 1; // 1 indicator bit, 1 data field element
@@ -327,6 +331,63 @@ fn bench_auditor(
     signature
 }
 
+fn mal_thhe_2_recipient(c: &mut Criterion) {
+    type P = ark_bls12_381::Bls12_381;
+    type F = <P as Pairing>::ScalarField;
+
+    let id = 1u16;
+
+    println!("Generating keying material...");
+    std::io::stdout().flush().ok();
+
+    // 1FE.KeyGen
+    let pp = paramgen::<P>();
+
+    let (_sk_1fe, pk_1fe) = keygen::<P>(pp);
+    // let shares = share_sk::<P>(sk_1fe, NUM_RECIPIENTS / 5, NUM_RECIPIENTS);
+    // Dummy share: avoid Shamir sharing in the phone micro-benchmark.
+    // Any scalar values are syntactically valid for `partial_decrypt`.
+    let mut rng = rand::thread_rng();
+    let share: SecretKeyShare<P> = (id as ShareId, F::rand(&mut rng), F::rand(&mut rng));
+
+    // Signatures
+    tink_signature::init();
+
+    // SIG.KeyGen for Helper
+    let sk_sig_helper =
+        tink_core::keyset::Handle::new(&tink_signature::ecdsa_p256_key_template()).unwrap();
+    let vk_sig_helper = sk_sig_helper.public().unwrap();
+
+    println!("Generating inputs for recipients...");
+    std::io::stdout().flush().ok();
+
+    let gt = PairingOutput::<P>::zero();
+    let ctxts_out = vec![vec![CiphertextT((gt, gt, gt, gt)); INFO_LEN - 1]; MAX_ENTITLEMENT];
+    let sig = tink_signature::new_signer(&sk_sig_helper).unwrap();
+    let data: Vec<u8> = ctxts_out
+        .iter()
+        .flat_map(|ctxts| ctxts.iter().flat_map(ctxt_t_to_bytes))
+        .collect();
+    let ctxts_out_sig = sig.sign(data.as_slice()).unwrap();
+
+    println!("Starting benchmark...");
+    std::io::stdout().flush().ok();
+
+    c.bench_function("mal_thhe_2_recipient", |b| {
+        b.iter(|| {
+            bench_recipient_2(
+                pp,
+                id,
+                pk_1fe,
+                &ctxts_out,
+                &ctxts_out_sig,
+                share,
+                &vk_sig_helper,
+            );
+        })
+    });
+}
+
 fn mal_thhe_2(c: &mut Criterion) {
     type P = ark_bls12_381::Bls12_381;
 
@@ -396,8 +457,7 @@ fn mal_thhe_2(c: &mut Criterion) {
         .collect::<Vec<_>>();
 
     // Auditor processes
-    let sig_auditor =
-        bench_auditor(&ctxts_auditor, &valid_set, &sk_enc_auditor, &sk_sig_auditor);
+    let sig_auditor = bench_auditor(&ctxts_auditor, &valid_set, &sk_enc_auditor, &sk_sig_auditor);
 
     // Helper checks and processes
     let (ctxts_out, ctxts_out_sig) = bench_helper(
@@ -447,21 +507,6 @@ fn mal_thhe_2(c: &mut Criterion) {
         })
         .collect::<Vec<_>>();
 
-    let share = shares[0];
-    c.bench_function("mal_thhe_2_recipient", |b| {
-        b.iter(|| {
-            bench_recipient_2(
-                pp,
-                id,
-                pk_1fe,
-                &ctxts_out,
-                &ctxts_out_sig,
-                share,
-                &vk_sig_helper,
-            );
-        })
-    });
-
     c.bench_function("mal_thhe_2_auditor", |b| {
         b.iter(|| {
             bench_auditor(&ctxts_auditor, &valid_set, &sk_enc_auditor, &sk_sig_auditor);
@@ -491,10 +536,30 @@ fn mal_thhe_2(c: &mut Criterion) {
     });
 }
 
-// criterion_group!(benches, mal_thhe_2);
 criterion_group! {
-    name = benches;
+    name = benches_phone;
+    config = Criterion::default().sample_size(10);
+    targets = mal_thhe_2_recipient
+}
+
+criterion_group! {
+    name = benches_laptop;
     config = Criterion::default().sample_size(10);
     targets = mal_thhe_2
 }
-criterion_main!(benches);
+
+// on mobile targets, only run the phone-focused benchmark
+#[cfg(any(target_os = "android", target_os = "ios"))]
+criterion_main!(benches_phone);
+
+// treat other embedded targets like mobile
+#[cfg(all(
+    not(any(target_os = "android", target_os = "ios")),
+    any(target_arch = "arm", target_arch = "aarch64"),
+    not(any(target_os = "linux", target_os = "macos", target_os = "windows"))
+))]
+criterion_main!(benches_phone);
+
+// non-mobile targets
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+criterion_main!(benches_laptop);

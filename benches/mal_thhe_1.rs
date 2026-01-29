@@ -17,6 +17,7 @@ use secret_sharing_and_dkg::common::ShareId;
 use secret_sharing_and_dkg::common::lagrange_basis_at_0_for_all;
 use secret_sharing_and_dkg::error::SSError;
 use std::collections::HashSet;
+use std::io::Write;
 use tink_core::keyset;
 
 type G1 = <Bls12<ark_bls12_381::Config> as Pairing>::G1;
@@ -315,6 +316,91 @@ where
     // panic!("Discrete log not found");
 }
 
+fn mal_thhe_1_recipient(c: &mut Criterion) {
+    let pp = setup::<G1>();
+
+    let id = 1u16;
+
+    println!("Generating keying material...");
+    std::io::stdout().flush().ok();
+
+    // 1FE.KeyGen
+    let (sk_1fe, pk_1fe) = keygen::<G1>(pp);
+    let shares = (1..=DECRYPTION_THRESHOLD as u16)
+        .map(|i| (i, sk_1fe * F::from(i as u64)))
+        .collect::<Vec<SecretKeyShare<G1>>>();
+
+    // Signatures
+    tink_signature::init();
+
+    // SIG.KeyGen for Helper
+    let sk_sig_helper =
+        tink_core::keyset::Handle::new(&tink_signature::ecdsa_p256_key_template()).unwrap();
+    let vk_sig_helper = sk_sig_helper.public().unwrap();
+    let sig = tink_signature::new_signer(&sk_sig_helper).unwrap();
+
+    // PKE
+    tink_hybrid::init();
+
+    // PKE.KeyGen for Helper
+    let sk_enc_helper = tink_core::keyset::Handle::new(
+        &tink_hybrid::ecies_hkdf_aes128_ctr_hmac_sha256_key_template(),
+    )
+    .unwrap();
+    let pk_enc_helper: keyset::Handle = sk_enc_helper.public().unwrap();
+
+    // PKE.KeyGen for Auditor
+    let sk_enc_auditor = tink_core::keyset::Handle::new(
+        &tink_hybrid::ecies_hkdf_aes128_ctr_hmac_sha256_key_template(),
+    )
+    .unwrap();
+    let pk_enc_auditor = sk_enc_auditor.public().unwrap();
+
+    println!("Generating inputs for recipients...");
+    std::io::stdout().flush().ok();
+
+    // Generate secret tags for recipients
+    let mut tags: Vec<Vec<[u8; TAG_BYTELEN]>> = Vec::new();
+    for i in 0..1 {
+        tags.push(Vec::new());
+        for _j in 0..(MAX_ENTITLEMENT) {
+            let mut tag = [0u8; TAG_BYTELEN];
+            rand::thread_rng().fill(&mut tag);
+            tags[i].push(tag);
+        }
+    }
+
+    let share = shares[0];
+    let ctxt_out = encrypt::<G1>(pp, pk_1fe, F::from(0u64));
+    let ctxt_out_sig = sig.sign(&ctxt_to_bytes(&ctxt_out)).unwrap();
+
+    println!("Starting benchmark...");
+    std::io::stdout().flush().ok();
+    
+    c.bench_function("mal_thhe_1_recipient", |b| {
+        b.iter(|| {
+            let _ = bench_recipient_1::<G1>(
+                black_box(1),
+                black_box(pp),
+                id,
+                &tags[0],
+                black_box(pk_1fe),
+                black_box(&pk_enc_helper),
+                black_box(&pk_enc_auditor),
+            );
+            let _ = bench_recipient_2(
+                pp,
+                id,
+                pk_1fe,
+                ctxt_out,
+                &ctxt_out_sig,
+                share,
+                &vk_sig_helper,
+            );
+        })
+    });
+}
+
 fn mal_thhe_1(c: &mut Criterion) {
     let pp = setup::<G1>();
 
@@ -382,8 +468,7 @@ fn mal_thhe_1(c: &mut Criterion) {
         .collect::<Vec<_>>();
 
     // Auditor processes
-    let sig_auditor =
-        bench_auditor(&ctxts_auditor, &valid_set, &sk_enc_auditor, &sk_sig_auditor);
+    let sig_auditor = bench_auditor(&ctxts_auditor, &valid_set, &sk_enc_auditor, &sk_sig_auditor);
 
     // Helper checks and processes
     let (ctxt_out, ctxt_out_sig) = bench_helper(
@@ -413,30 +498,6 @@ fn mal_thhe_1(c: &mut Criterion) {
         })
         .collect::<Vec<_>>();
 
-    let share = shares[0];
-    c.bench_function("mal_thhe_1_recipient", |b| {
-        b.iter(|| {
-            let _ = bench_recipient_1::<G1>(
-                black_box(1),
-                black_box(pp),
-                id,
-                &tags[0],
-                black_box(pk_1fe),
-                black_box(&pk_enc_helper),
-                black_box(&pk_enc_auditor),
-            );
-            let _ = bench_recipient_2(
-                pp,
-                id,
-                pk_1fe,
-                ctxt_out,
-                &ctxt_out_sig,
-                share,
-                &vk_sig_helper,
-            );
-        })
-    });
-
     c.bench_function("mal_thhe_1_auditor", |b| {
         b.iter(|| {
             bench_auditor(&ctxts_auditor, &valid_set, &sk_enc_auditor, &sk_sig_auditor);
@@ -462,10 +523,29 @@ fn mal_thhe_1(c: &mut Criterion) {
     });
 }
 
-// criterion_group!(benches, mal_thhe_1);
 criterion_group! {
-    name = benches;
+    name = benches_phone;
+    config = Criterion::default().sample_size(10);
+    targets = mal_thhe_1_recipient
+}
+criterion_group! {
+    name = benches_laptop;
     config = Criterion::default().sample_size(10);
     targets = mal_thhe_1
 }
-criterion_main!(benches);
+
+// on mobile targets, only run the phone-focused benchmark
+#[cfg(any(target_os = "android", target_os = "ios"))]
+criterion_main!(benches_phone);
+
+// treat other embedded targets like mobile
+#[cfg(all(
+    not(any(target_os = "android", target_os = "ios")),
+    any(target_arch = "arm", target_arch = "aarch64"),
+    not(any(target_os = "linux", target_os = "macos", target_os = "windows"))
+))]
+criterion_main!(benches_phone);
+
+// non-mobile targets
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+criterion_main!(benches_laptop);

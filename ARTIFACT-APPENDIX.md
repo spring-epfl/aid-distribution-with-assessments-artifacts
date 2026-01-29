@@ -281,7 +281,7 @@ Expected time: 10 minutes human-time + 10 minutes compute-time
 Connect a phone to your machine and enable USB debugging (see [instructions to connect a phone](#connecting-a-phone)). In `aid-distribution-with-assessments-artifacts/`, run
 
 ```bash
-cargo dinghy -d $DINGHY_HINT bench --bench hbc_thhe_2  
+cargo dinghy -d $DINGHY_HINT bench --bench hbc_thhe_2 -- hbc_thhe_2_recipient
 ```   
 
 and read off the timings for "hbc_thhe_2_recipient". 
@@ -306,7 +306,7 @@ Expected time: 10 minutes human-time + 10 minutes compute-time
 Connect a phone to your machine and enable USB debugging (see [instructions to connect a phone](#connecting-a-phone)). In `aid-distribution-with-assessments-artifacts/`, run
 
 ```bash
-cargo dinghy -d $DINGHY_HINT bench --bench mal_thhe_1
+cargo dinghy -d $DINGHY_HINT bench --bench mal_thhe_1 -- mal_thhe_1_recipient
 ```   
 
 and read off the timings for "mal_thhe_1_recipient". 
@@ -330,7 +330,7 @@ Expected time: 10 minutes human-time + 10 minutes compute-time
 Connect a phone to your machine and enable USB debugging (see [instructions to connect a phone](#connecting-a-phone)). In `aid-distribution-with-assessments-artifacts/`, run
 
 ```bash
-cargo dinghy -d $DINGHY_HINT bench --bench mal_thhe_2
+cargo dinghy -d $DINGHY_HINT bench --bench mal_thhe_2 -- mal_thhe_2_recipient   
 ```   
 
 and read off the timings for "mal_thhe_1_recipient". 

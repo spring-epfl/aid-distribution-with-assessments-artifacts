@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use aid_distribution_with_assessments::DECRYPTION_THRESHOLD;
 use aid_distribution_with_assessments::NUM_RECIPIENTS;
 use aid_distribution_with_assessments::NUM_SHOW_UP;
@@ -217,31 +219,43 @@ fn hbc_thhe_1_recipient(c: &mut Criterion) {
 
     let id = 1u16;
 
+    println!("Generating keying material...");
+    std::io::stdout().flush().ok();
+
     // 1FE.KeyGen
     let (sk_1fe, pk_1fe) = keygen::<G1>(pp);
     let shares = (1..=DECRYPTION_THRESHOLD as u16)
         .map(|i| (i, sk_1fe * F::from(i as u64)))
         .collect::<Vec<SecretKeyShare<G1>>>();
 
-    // SIG.KeyGen for Helper
+    // Signatures
     tink_signature::init();
+
+    // SIG.KeyGen for Helper
     let sk_sig_helper =
         tink_core::keyset::Handle::new(&tink_signature::ecdsa_p256_key_template()).unwrap();
     let vk_sig_helper = sk_sig_helper.public().unwrap();
     let sig = tink_signature::new_signer(&sk_sig_helper).unwrap();
 
-    // PKE.KeyGen for Helper
+    // PKE
     tink_hybrid::init();
+
+    // PKE.KeyGen for Helper
     let sk_enc_helper = tink_core::keyset::Handle::new(
         &tink_hybrid::ecies_hkdf_aes128_ctr_hmac_sha256_key_template(),
     )
     .unwrap();
     let pk_enc_helper = sk_enc_helper.public().unwrap();
 
-    let share = shares[0];
+    println!("Generating inputs for recipients...");
+    std::io::stdout().flush().ok();
 
+    let share = shares[0];
     let ctxt_out = encrypt::<G1>(pp, pk_1fe, F::from(0u64));
     let ctxt_out_sig = sig.sign(&ctxt_to_bytes(&ctxt_out)).unwrap();
+
+    println!("Starting benchmark...");
+    std::io::stdout().flush().ok();
     c.bench_function("hbc_thhe_1_recipient", |b| {
         b.iter(|| {
             let _ = bench_recipient_1::<G1>(
@@ -333,7 +347,6 @@ fn hbc_thhe_1(c: &mut Criterion) {
     });
 }
 
-// criterion_group!(benches_phone, hbc_thhe_1_recipient);
 criterion_group! {
     name = benches_phone;
     config = Criterion::default().sample_size(10);
@@ -344,4 +357,19 @@ criterion_group! {
     config = Criterion::default().sample_size(10);
     targets = hbc_thhe_1
 }
-criterion_main!(benches_phone, benches_laptop);
+
+// on mobile targets, only run the phone-focused benchmark
+#[cfg(any(target_os = "android", target_os = "ios"))]
+criterion_main!(benches_phone);
+
+// treat other embedded targets like mobile
+#[cfg(all(
+    not(any(target_os = "android", target_os = "ios")),
+    any(target_arch = "arm", target_arch = "aarch64"),
+    not(any(target_os = "linux", target_os = "macos", target_os = "windows"))
+))]
+criterion_main!(benches_phone);
+
+// non-mobile targets
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+criterion_main!(benches_laptop);
