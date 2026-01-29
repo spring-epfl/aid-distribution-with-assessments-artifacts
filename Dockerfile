@@ -50,7 +50,7 @@ RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
 ENV PATH="/home/artifact/.cargo/bin:${PATH}"
 
 # Install cargo-dinghy
-RUN cargo install cargo-dinghy
+RUN cargo install --locked cargo-dinghy
 
 # Compile code
 RUN cargo build --release
