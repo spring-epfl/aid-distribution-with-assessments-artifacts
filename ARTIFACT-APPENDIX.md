@@ -179,7 +179,7 @@ We do not expect the timings of Table 2 to be reproducible within a 5% margin du
 
 We describe our experiments below. For each experiment, we describe the command needed to run the experiment, how to parse the output, and how to match the results to the claims in the paper.
 
-Additionally, we give a script `run_all_experiments.sh`, which runs all experiments and outputs a table similar to Table 2 in the paper. Running all 6 experiments with this command should take roughly 1 hour of compute time (~10 minutes per experiment).
+Additionally, we give a script `run_all_experiments.sh`, which runs all experiments and outputs the raw timings in separate files in `results/raw`. Running all 6 experiments with this command should take roughly 1 hour of compute time (~10 minutes per experiment).
 
 #### Experiment 1: HbC-2PC-f1
 
