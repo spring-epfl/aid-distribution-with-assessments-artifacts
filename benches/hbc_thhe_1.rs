@@ -1,20 +1,19 @@
-use ark_ec::Group;
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use std::io::Write;
 
-use aid_distribution_with_assessments::thbgn::rand_invertible;
 use aid_distribution_with_assessments::DECRYPTION_THRESHOLD;
 use aid_distribution_with_assessments::NUM_RECIPIENTS;
 use aid_distribution_with_assessments::NUM_SHOW_UP;
+use aid_distribution_with_assessments::thbgn::rand_invertible;
+use ark_ec::Group;
 use ark_ec::bls12::Bls12;
 use ark_ec::pairing::Pairing;
-use ark_std::cfg_into_iter;
 use ark_std::One;
-use ark_std::UniformRand;
 use ark_std::Zero;
-use openssl::cipher::Cipher;
+use ark_std::cfg_into_iter;
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use rand::thread_rng;
-use secret_sharing_and_dkg::common::lagrange_basis_at_0_for_all;
 use secret_sharing_and_dkg::common::ShareId;
+use secret_sharing_and_dkg::common::lagrange_basis_at_0_for_all;
 use secret_sharing_and_dkg::error::SSError;
 use tink_core::keyset;
 
@@ -22,9 +21,9 @@ type G1 = <Bls12<ark_bls12_381::Config> as Pairing>::G1;
 type F = <Bls12<ark_bls12_381::Config> as Pairing>::ScalarField;
 
 type Ciphertext<G> = (G, G);
-type SecretKeyShare<G: Group> = (ShareId, G::ScalarField);
+type SecretKeyShare<G> = (ShareId, <G as Group>::ScalarField);
 type PublicKey<G> = G;
-type SecretKey<G: Group> = G::ScalarField;
+type SecretKey<G> = <G as Group>::ScalarField;
 type PublicParameters<G> = G;
 type PartialDecryption<G> = (ShareId, G);
 
@@ -78,11 +77,13 @@ fn partial_decrypt<G: Group>(ctxt: Ciphertext<G>, sk: SecretKeyShare<G>) -> Part
     (id, c2 * s)
 }
 
+#[allow(dead_code)]
 fn decrypt<G: Group>(ctxt: Ciphertext<G>, sk: SecretKey<G>) -> G::ScalarField {
     let (c1, c2) = ctxt;
     find_dlog(G::generator(), c2 - c1 * sk, (NUM_RECIPIENTS as u64).into()).unwrap()
 }
 
+#[allow(unexpected_cfgs)]
 pub fn reconstruct_secret_in_exp<G: Group>(shares: &[(ShareId, G)]) -> Result<G, SSError> {
     // let threshold = self.threshold();
     // let len = self.0.len() as ShareId;
@@ -121,9 +122,9 @@ fn bench_helper<G: Group>(
     }
 
     // Decrypt outer ciphertexts
-    let dec = tink_hybrid::new_decrypt(&sk_enc_helper).unwrap();
+    let dec = tink_hybrid::new_decrypt(sk_enc_helper).unwrap();
     let inner_ctxts = ctxts
-        .into_iter()
+        .iter()
         .map(|ctxt| {
             let pt = dec.decrypt(ctxt, id_bytes.as_slice()).unwrap();
             bytes_to_ctxt::<G>(&pt)
@@ -138,7 +139,7 @@ fn bench_helper<G: Group>(
         });
 
     // Sign the resulting ciphertext
-    let sig = tink_signature::new_signer(&sk_sig_helper).unwrap();
+    let sig = tink_signature::new_signer(sk_sig_helper).unwrap();
     let data: Vec<u8> = ctxt_to_bytes(&res);
     let signature = sig.sign(data.as_slice()).unwrap();
 
@@ -166,18 +167,18 @@ fn bench_recipient_1<G: Group>(
     let ctxt = encrypt::<G>(pp, pk, G::ScalarField::from(b));
 
     // Encrypt under helper's public key
-    let enc = tink_hybrid::new_encrypt(&pk_helper).unwrap();
+    let enc = tink_hybrid::new_encrypt(pk_helper).unwrap();
     let pt = ctxt_to_bytes(&ctxt);
     let bytes = pt.as_slice();
-    let ct = enc.encrypt(&bytes, id.to_be_bytes().as_slice()).unwrap();
+    let ct = enc.encrypt(bytes, id.to_be_bytes().as_slice()).unwrap();
 
     ct
 }
 
 fn bench_recipient_2<G: Group>(
-    pp: PublicParameters<G>,
-    id: u16,
-    pk: PublicKey<G>,
+    _pp: PublicParameters<G>,
+    _id: u16,
+    _pk: PublicKey<G>,
     ctxt_out: Ciphertext<G>,
     ctxt_out_sig: &Vec<u8>,
     sk: SecretKeyShare<G>,
@@ -185,14 +186,12 @@ fn bench_recipient_2<G: Group>(
 ) -> PartialDecryption<G> {
     // Verify signature on ctxt_out
     tink_signature::init();
-    let v = tink_signature::new_verifier(&vk).unwrap();
+    let v = tink_signature::new_verifier(vk).unwrap();
     let data: Vec<u8> = ctxt_to_bytes(&ctxt_out);
-    v.verify(&ctxt_out_sig, data.as_slice()).unwrap();
+    v.verify(ctxt_out_sig, data.as_slice()).unwrap();
 
     // Compute a partial decryption of a ciphertext
-    let pdec = partial_decrypt::<G>(ctxt_out, sk);
-
-    pdec
+    partial_decrypt::<G>(ctxt_out, sk)
 }
 
 pub fn find_dlog<G: Group>(base: G, p: G, bound: G::ScalarField) -> Option<G::ScalarField>
@@ -218,45 +217,55 @@ where
 fn hbc_thhe_1_recipient(c: &mut Criterion) {
     let pp = setup::<G1>();
 
-    let last_period = 0u16;
     let id = 1u16;
+
+    println!("Generating keying material...");
+    std::io::stdout().flush().ok();
 
     // 1FE.KeyGen
     let (sk_1fe, pk_1fe) = keygen::<G1>(pp);
     let shares = (1..=DECRYPTION_THRESHOLD as u16)
-        .map(|i| (i, sk_1fe * F::from(i as u64))) // TODO: fix secret sharing
+        .map(|i| (i, sk_1fe * F::from(i as u64)))
         .collect::<Vec<SecretKeyShare<G1>>>();
 
-    // SIG.KeyGen for Helper
+    // Signatures
     tink_signature::init();
+
+    // SIG.KeyGen for Helper
     let sk_sig_helper =
         tink_core::keyset::Handle::new(&tink_signature::ecdsa_p256_key_template()).unwrap();
     let vk_sig_helper = sk_sig_helper.public().unwrap();
     let sig = tink_signature::new_signer(&sk_sig_helper).unwrap();
 
-    // PKE.KeyGen for Helper
+    // PKE
     tink_hybrid::init();
+
+    // PKE.KeyGen for Helper
     let sk_enc_helper = tink_core::keyset::Handle::new(
         &tink_hybrid::ecies_hkdf_aes128_ctr_hmac_sha256_key_template(),
     )
     .unwrap();
     let pk_enc_helper = sk_enc_helper.public().unwrap();
-    let enc = tink_hybrid::new_encrypt(&pk_enc_helper).unwrap();
 
-    let share = shares[0].clone();
+    println!("Generating inputs for recipients...");
+    std::io::stdout().flush().ok();
 
+    let share = shares[0];
     let ctxt_out = encrypt::<G1>(pp, pk_1fe, F::from(0u64));
     let ctxt_out_sig = sig.sign(&ctxt_to_bytes(&ctxt_out)).unwrap();
+
+    println!("Starting benchmark...");
+    std::io::stdout().flush().ok();
     c.bench_function("hbc_thhe_1_recipient", |b| {
         b.iter(|| {
-            bench_recipient_1::<G1>(
+            let _ = bench_recipient_1::<G1>(
                 black_box(1),
                 black_box(pp),
                 id,
                 black_box(pk_1fe),
                 black_box(&pk_enc_helper),
             );
-            bench_recipient_2(
+            let _ = bench_recipient_2(
                 pp,
                 id,
                 pk_1fe,
@@ -278,7 +287,7 @@ fn hbc_thhe_1(c: &mut Criterion) {
     // 1FE.KeyGen
     let (sk_1fe, pk_1fe) = keygen::<G1>(pp);
     let shares = (1..=DECRYPTION_THRESHOLD as u16)
-        .map(|i| (i, sk_1fe * F::from(i as u64))) // TODO: fix secret sharing
+        .map(|i| (i, sk_1fe * F::from(i as u64)))
         .collect::<Vec<SecretKeyShare<G1>>>();
 
     // SIG.KeyGen for Helper
@@ -286,7 +295,6 @@ fn hbc_thhe_1(c: &mut Criterion) {
     let sk_sig_helper =
         tink_core::keyset::Handle::new(&tink_signature::ecdsa_p256_key_template()).unwrap();
     let vk_sig_helper = sk_sig_helper.public().unwrap();
-    let sig = tink_signature::new_signer(&sk_sig_helper).unwrap();
 
     // PKE.KeyGen for Helper
     tink_hybrid::init();
@@ -295,7 +303,6 @@ fn hbc_thhe_1(c: &mut Criterion) {
     )
     .unwrap();
     let pk_enc_helper = sk_enc_helper.public().unwrap();
-    let enc = tink_hybrid::new_encrypt(&pk_enc_helper).unwrap();
 
     // Recipients encrypt
     let ctxts = (0..NUM_SHOW_UP)
@@ -340,7 +347,6 @@ fn hbc_thhe_1(c: &mut Criterion) {
     });
 }
 
-// criterion_group!(benches_phone, hbc_thhe_1_recipient);
 criterion_group! {
     name = benches_phone;
     config = Criterion::default().sample_size(10);
@@ -351,4 +357,19 @@ criterion_group! {
     config = Criterion::default().sample_size(10);
     targets = hbc_thhe_1
 }
-criterion_main!(benches_phone, benches_laptop);
+
+// on mobile targets, only run the phone-focused benchmark
+#[cfg(any(target_os = "android", target_os = "ios"))]
+criterion_main!(benches_phone);
+
+// treat other embedded targets like mobile
+#[cfg(all(
+    not(any(target_os = "android", target_os = "ios")),
+    any(target_arch = "arm", target_arch = "aarch64"),
+    not(any(target_os = "linux", target_os = "macos", target_os = "windows"))
+))]
+criterion_main!(benches_phone);
+
+// non-mobile targets
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+criterion_main!(benches_laptop);
